@@ -1,0 +1,23 @@
+{
+    "python.languageServer": "None",
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportMissingModuleSource": "none",
+        "reportAttributeAccessIssue": "none"
+    },
+    "python.terminal.activateEnvironment": false,
+    "micropico.openOnStart": false,
+    "micropico.autoConnect": true,
+    "micropico.syncFolder": "firmware",
+    "micropico.pyIgnore": "frontend,docs,scripts,udev,.cursor,.git,blink.py,**/__pycache__",
+    "micropico.syncButton": "sync",
+    "micropico.statusbarButtons": true,
+    "python.analysis.typeshedPaths": [
+        "/home/hell/.micropico-stubs/included"
+    ],
+    "python.analysis.extraPaths": [
+        "/home/hell/.micropico-stubs/included",
+        "${workspaceFolder}/firmware",
+        "${workspaceFolder}/firmware/lib"
+    ]
+}
