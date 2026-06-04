@@ -1,0 +1,9 @@
+# Permisos de usuario para volúmenes BOOTSEL de Pico.
+# Instalar:
+#   sudo cp udev/99-rpi-pico-bootsel.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# Montaje: scripts/pico-bootsel mount
+
+SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="RPI-RP2", TAG+="uaccess"
+SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="RP2350", TAG+="uaccess"
