@@ -1,0 +1,160 @@
+import asyncio
+import socket
+import json
+
+
+def _log(msg):
+    print(msg, flush=True)
+
+
+class TCPClient:
+    def __init__(self, writer):
+        self.writer = writer
+
+    async def send(self, msg):
+        self.writer.write((msg + "\n").encode())
+        await self.writer.drain()
+
+    def __repr__(self):
+        return f"TCPClient({id(self)})"
+
+
+class WSClient:
+    def __init__(self, websocket):
+        self.ws = websocket
+
+    async def send(self, msg):
+        await self.ws.send(msg + "\n")
+
+    def __repr__(self):
+        return f"WSClient({id(self)})"
+
+
+class TCPServer:
+    def __init__(self, pubsub, host="0.0.0.0", port=5051):
+        self.pubsub = pubsub
+        self.host = host
+        self.port = port
+        try:
+            _log("TCPServer host " + str(socket.gethostbyname(socket.gethostname())))
+        except Exception:
+            _log("TCPServer host " + str(host))
+
+    async def handle_client(self, reader, writer):
+        peer = writer.get_extra_info("peername")
+        _log(f"[TCP] connect {peer}")
+        client = TCPClient(writer)
+        try:
+            while True:
+                data = await reader.readline()
+                if not data:
+                    break
+                try:
+                    pkt = json.loads(data.decode())
+                except Exception:
+                    continue
+                if pkt.get("action") == "SUB":
+                    self.pubsub.subscribe(client, pkt["topic"])
+                elif pkt.get("action") == "PUB":
+                    # No bloquear la lectura TCP de la Pico mientras se reenvía a WS.
+                    asyncio.create_task(
+                        self.pubsub.publish(pkt["topic"], pkt["data"], origin=client)
+                    )
+        finally:
+            self.pubsub.remove_client(client)
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except Exception:
+                pass
+            _log(f"[TCP] disconnect {peer}")
+
+    async def start(self):
+        server = await asyncio.start_server(
+            self.handle_client,
+            self.host,
+            self.port,
+            limit=256 * 1024,
+        )
+        _log(f"TCP listening on {self.port}")
+        return server
+
+
+class WSServer:
+    def __init__(self, pubsub, host="0.0.0.0", port=5052):
+        self.pubsub = pubsub
+        self.host = host
+        self.port = port
+
+    async def handler(self, websocket):
+        peer = websocket.remote_address
+        _log(f"[WS] connect {peer}")
+        client = WSClient(websocket)
+        try:
+            async for message in websocket:
+                pkt = json.loads(message)
+                if pkt.get("action") == "SUB":
+                    self.pubsub.subscribe(client, pkt["topic"])
+                elif pkt.get("action") == "PUB":
+                    asyncio.create_task(
+                        self.pubsub.publish(pkt["topic"], pkt["data"], origin=client)
+                    )
+        except Exception as e:
+            _log(f"[WS] error {peer}: {e}")
+        finally:
+            self.pubsub.remove_client(client)
+            _log(f"[WS] disconnect {peer}")
+
+    async def start(self):
+        try:
+            import websockets
+            return await websockets.serve(self.handler, self.host, self.port)
+        except ImportError:
+            _log("websockets no instalado: pip install websockets")
+            return None
+
+
+class PubSub:
+    def __init__(self):
+        self.subscriptions = {}
+
+    def subscribe(self, client, topic):
+        self.subscriptions.setdefault(topic, set()).add(client)
+        _log(f"[SUB] {client} -> {topic}")
+
+    def remove_client(self, client):
+        for topic, clients in list(self.subscriptions.items()):
+            clients.discard(client)
+            if not clients:
+                del self.subscriptions[topic]
+
+    async def publish(self, topic, data, origin=None):
+        msg = json.dumps({
+            "action": "PUB",
+            "topic": topic,
+            "data": data,
+        })
+        clients = self.subscriptions.get(topic, set())
+        _log(f"[PUB] {topic} -> {len(clients)} clients")
+        for c in list(clients):
+            if c != origin:
+                try:
+                    await c.send(msg)
+                except Exception:
+                    clients.discard(c)
+
+
+async def main():
+    pubsub = PubSub()
+    tcp = TCPServer(pubsub)
+    ws = WSServer(pubsub)
+    await tcp.start()
+    ws_srv = await ws.start()
+    _log("TCP on 5051 | WS on 5052")
+    if ws_srv is None:
+        _log("Solo TCP activo (instala websockets para dashboard WS)")
+    await asyncio.Future()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
