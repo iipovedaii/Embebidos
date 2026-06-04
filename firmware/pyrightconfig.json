@@ -1,0 +1,6 @@
+{
+  "extraPaths": ["lib", "typings", "/home/hell/.micropico-stubs/included"],
+  "stubPath": "/home/hell/.micropico-stubs/included",
+  "reportMissingModuleSource": "none",
+  "reportAttributeAccessIssue": "none"
+}
