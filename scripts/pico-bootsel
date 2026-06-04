@@ -1,0 +1,292 @@
+#!/usr/bin/env bash
+# Detector y montaje del volumen BOOTSEL de Raspberry Pi Pico / Pico 2(W).
+# Etiquetas: RPI-RP2 (Pico 1 / RP2040), RP2350 (Pico 2 / 2W).
+#
+# Uso:
+#   pico-bootsel status          # ¿conectada en BOOTSEL? ¿montada?
+#   pico-bootsel mount           # monta si hay RPI-RP2
+#   pico-bootsel umount          # desmonta
+#   pico-bootsel watch           # espera BOOTSEL y monta (Ctrl+C para salir)
+#   pico-bootsel wait            # solo espera aparición (sin montar)
+#
+# Variables:
+#   PICO_BOOTSEL_MOUNT  directorio base (por defecto: ~/mnt)
+
+set -euo pipefail
+
+readonly BOOTSEL_LABELS="RPI-RP2 RP2350"
+readonly VENDOR="2e8a"
+# BOOTSEL: RP2040=0003, RP2350 (Pico 2)=000f
+readonly BOOTSEL_PIDS="0003 000f"
+
+MOUNT_BASE="${PICO_BOOTSEL_MOUNT:-${HOME}/mnt}"
+WATCH_INTERVAL="${PICO_BOOTSEL_INTERVAL:-1}"
+
+# Resultado de la última búsqueda (no usar en subshells $(...)).
+DETECTED_LABEL=""
+MOUNT_POINT=""
+FOUND_DEV=""
+
+log() { printf '[pico-bootsel] %s\n' "$*"; }
+err() { printf '[pico-bootsel] ERROR: %s\n' "$*" >&2; }
+
+# --- Detección USB (bootloader, aún sin partición montable) ---
+usb_bootsel_connected() {
+  local d v p
+  for d in /sys/bus/usb/devices/*; do
+    [[ -f "${d}/idVendor" ]] || continue
+    v=$(<"${d}/idVendor")
+    [[ "${v}" == "${VENDOR}" ]] || continue
+    [[ -f "${d}/idProduct" ]] || continue
+    p=$(<"${d}/idProduct")
+    for bid in ${BOOTSEL_PIDS}; do
+      if [[ "${p}" == "${bid}" ]]; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+usb_pico_any() {
+  local d v
+  for d in /sys/bus/usb/devices/*; do
+    [[ -f "${d}/idVendor" ]] || continue
+    v=$(<"${d}/idVendor")
+    [[ "${v}" == "${VENDOR}" ]] && return 0
+  done
+  return 1
+}
+
+# --- Detección por volumen BOOTSEL ---
+find_bootsel_label() {
+  local label dev
+  for label in ${BOOTSEL_LABELS}; do
+    if [[ -e "/dev/disk/by-label/${label}" ]]; then
+      DETECTED_LABEL="${label}"
+      printf '%s' "${label}"
+      return 0
+    fi
+  done
+  if command -v lsblk >/dev/null 2>&1; then
+    for label in ${BOOTSEL_LABELS}; do
+      dev=$(lsblk -nrpo PATH,LABEL 2>/dev/null | awk -v l="${label}" '$2 == l { print $1; exit }')
+      if [[ -n "${dev}" ]]; then
+        DETECTED_LABEL="${label}"
+        printf '%s' "${label}"
+        return 0
+      fi
+    done
+  fi
+  DETECTED_LABEL=""
+  return 1
+}
+
+locate_bootsel() {
+  local label dev
+  DETECTED_LABEL=""
+  MOUNT_POINT=""
+  FOUND_DEV=""
+
+  label=$(find_bootsel_label) || return 1
+  DETECTED_LABEL="${label}"
+  MOUNT_POINT="${MOUNT_BASE}/${label}"
+  if [[ -e "/dev/disk/by-label/${label}" ]]; then
+    dev=$(readlink -f "/dev/disk/by-label/${label}")
+  else
+    dev=$(lsblk -nrpo PATH,LABEL 2>/dev/null | awk -v l="${label}" '$2 == l { print $1; exit }')
+  fi
+  FOUND_DEV="${dev}"
+  return 0
+}
+
+# Devuelve la partición a montar (sdb1) o el disco si no hay partición.
+resolve_mount_partition() {
+  local dev="$1" part
+  [[ -n "${dev}" ]] || return 1
+
+  if [[ "${dev}" =~ ^/dev/sd[a-z]$ ]]; then
+    part="${dev}1"
+    [[ -b "${part}" ]] && printf '%s' "${part}" && return 0
+  elif [[ "${dev}" =~ ^/dev/mmcblk[0-9]+$ ]]; then
+    part="${dev}p1"
+    [[ -b "${part}" ]] && printf '%s' "${part}" && return 0
+  fi
+
+  printf '%s' "${dev}"
+}
+
+is_mounted_at() {
+  local mp="$1"
+  findmnt -rn -T "${mp}" >/dev/null 2>&1
+}
+
+current_mountpoint() {
+  local dev="$1" mp
+  mp=$(findmnt -rn -S "${dev}" -o TARGET 2>/dev/null | head -1)
+  printf '%s' "${mp}"
+}
+
+do_mount() {
+  local dev part mp
+
+  locate_bootsel || true
+  dev="${FOUND_DEV}"
+  if [[ -z "${dev}" ]]; then
+    err "No se encontró volumen BOOTSEL (${BOOTSEL_LABELS}). ¿BOOTSEL + USB conectados?"
+    return 1
+  fi
+
+  part=$(resolve_mount_partition "${dev}")
+  mp=$(current_mountpoint "${part}")
+  if [[ -n "${mp}" ]]; then
+    log "Ya montado: ${part} → ${mp}"
+    printf '%s\n' "${mp}"
+    return 0
+  fi
+
+  mkdir -p "${MOUNT_POINT}"
+
+  if command -v udisksctl >/dev/null 2>&1; then
+    log "Montando ${part} con udisksctl…"
+    udisksctl mount -b "${part}" --no-user-interaction 2>/dev/null | tail -1 || true
+    mp=$(current_mountpoint "${part}")
+    if [[ -n "${mp}" ]]; then
+      log "Montado en ${mp}"
+      printf '%s\n' "${mp}"
+      return 0
+    fi
+  fi
+
+  if mountpoint -q "${MOUNT_POINT}" 2>/dev/null; then
+    log "Ya montado en ${MOUNT_POINT}"
+    printf '%s\n' "${MOUNT_POINT}"
+    return 0
+  fi
+
+  log "Montando ${part} en ${MOUNT_POINT}…"
+  if mount -o "uid=$(id -u),gid=$(id -g),umask=022" "${part}" "${MOUNT_POINT}" 2>/dev/null; then
+    :
+  elif sudo mount -o "uid=$(id -u),gid=$(id -g),umask=022" "${part}" "${MOUNT_POINT}"; then
+    :
+  else
+    err "Fallo al montar. Prueba: sudo usermod -aG uucp,lock ${USER}  (y vuelve a iniciar sesión)"
+    return 1
+  fi
+
+  log "Montado en ${MOUNT_POINT}"
+  printf '%s\n' "${MOUNT_POINT}"
+}
+
+do_umount() {
+  local dev part mp label
+
+  find_bootsel_label >/dev/null || true
+  for label in ${BOOTSEL_LABELS}; do
+    MOUNT_POINT="${MOUNT_BASE}/${label}"
+    if is_mounted_at "${MOUNT_POINT}"; then
+      break
+    fi
+  done
+
+  if [[ -n "${MOUNT_POINT}" ]] && is_mounted_at "${MOUNT_POINT}"; then
+    log "Desmontando ${MOUNT_POINT}…"
+    umount "${MOUNT_POINT}" 2>/dev/null || sudo umount "${MOUNT_POINT}"
+    return 0
+  fi
+
+  locate_bootsel || true
+  dev="${FOUND_DEV}"
+  [[ -n "${dev}" ]] || { log "Nada que desmontar."; return 0; }
+  part=$(resolve_mount_partition "${dev}")
+  mp=$(current_mountpoint "${part}")
+  if [[ -z "${mp}" ]]; then
+    log "No está montado."
+    return 0
+  fi
+  log "Desmontando ${mp}…"
+  umount "${mp}" 2>/dev/null || sudo umount "${mp}"
+}
+
+cmd_status() {
+  local dev part mp
+
+  if usb_bootsel_connected; then
+    log "USB BOOTSEL detectado (vendor ${VENDOR})."
+  elif usb_pico_any; then
+    log "Hay un dispositivo Raspberry Pi USB, pero no en modo BOOTSEL (¿MicroPython en ejecución?)."
+  else
+    log "No hay ninguna Pico Raspberry Pi conectada por USB."
+  fi
+
+  locate_bootsel || true
+  dev="${FOUND_DEV}"
+  if [[ -n "${dev}" ]]; then
+    part=$(resolve_mount_partition "${dev}")
+    log "Volumen ${DETECTED_LABEL}: ${part}"
+    mp=$(current_mountpoint "${part}")
+    if [[ -n "${mp}" ]]; then
+      log "Montado en: ${mp}"
+    else
+      log "Volumen presente pero no montado. Ejecuta: $0 mount"
+    fi
+    return 0
+  fi
+
+  if usb_bootsel_connected; then
+    log "BOOTSEL USB activo; esperando volumen (${BOOTSEL_LABELS})…"
+    return 2
+  fi
+  return 1
+}
+
+cmd_watch() {
+  local dev
+  log "Esperando BOOTSEL (${BOOTSEL_LABELS})… Mantén BOOTSEL al conectar USB. Ctrl+C para salir."
+  while true; do
+    locate_bootsel || true
+    dev="${FOUND_DEV}"
+    if [[ -n "${dev}" ]]; then
+      log "Detectado ${DETECTED_LABEL} en ${dev}"
+      do_mount
+      return 0
+    fi
+    if usb_bootsel_connected; then
+      printf '.' >&2
+    fi
+    sleep "${WATCH_INTERVAL}"
+  done
+}
+
+cmd_wait() {
+  while ! locate_bootsel; do
+    sleep "${WATCH_INTERVAL}"
+  done
+  printf '%s\n' "${FOUND_DEV}"
+}
+
+usage() {
+  sed -n '3,11p' "$0" | sed 's/^# \{0,1\}//'
+  printf '\nComandos: status | mount | umount | watch | wait\n'
+}
+
+main() {
+  local cmd="${1:-status}"
+  shift || true
+
+  case "${cmd}" in
+    -h|--help|help) usage ;;
+    status)  cmd_status ;;
+    mount)   do_mount ;;
+    umount|unmount) do_umount ;;
+    watch)   cmd_watch "$@" ;;
+    wait)    cmd_wait ;;
+    *)
+      err "Comando desconocido: ${cmd}"
+      usage
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
