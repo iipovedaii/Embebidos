@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SISEMB · Robot Telemetry Dashboard</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+    rel="stylesheet"
+  />
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            base: "#050203",
+            surface: "rgba(18, 6, 8, 0.65)",
+            neon: {
+              red: "#ff3b3b",
+              orange: "#ff6b35",
+              amber: "#ff9f1c",
+              crimson: "#dc2626",
+              ember: "#f97316",
+              rose: "#fb7185",
+            },
+          },
+          fontFamily: {
+            sans: ["Inter", "ui-sans-serif", "system-ui"],
+            mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular"],
+          },
+          boxShadow: {
+            glow: "0 0 22px rgba(255, 59, 59, 0.28)",
+            "glow-red": "0 0 24px rgba(255, 59, 59, 0.4)",
+            "glow-orange": "0 0 24px rgba(255, 107, 53, 0.35)",
+            "glow-amber": "0 0 24px rgba(255, 159, 28, 0.32)",
+          },
+        },
+      },
+    };
+  </script>
+
+  <link rel="stylesheet" href="styles.css" />
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+</head>
+<body class="bg-base text-red-100/90 font-sans min-h-screen antialiased selection:bg-neon-red/25">
+  <div class="fixed inset-0 -z-10 pointer-events-none bg-grid"></div>
+  <div class="fixed inset-0 -z-10 pointer-events-none bg-radial"></div>
+
+  <main class="max-w-7xl mx-auto px-4 md:px-6 py-6 space-y-6">
+
+    <!-- ========== HEADER ========== -->
+    <header
+      class="card flex flex-col md:flex-row md:items-center md:justify-between gap-4 px-5 py-4"
+    >
+      <div class="flex items-center gap-3">
+        <div class="relative">
+          <i data-lucide="bot" class="w-7 h-7 text-neon-orange"></i>
+          <span class="absolute -bottom-1 -right-1 w-2.5 h-2.5 rounded-full bg-neon-red shadow-glow-red pulse-dot"></span>
+        </div>
+        <div>
+          <h1 class="text-lg md:text-xl font-semibold tracking-tight">
+            SISEMB · <span class="text-neon-orange">Robot Telemetry</span>
+          </h1>
+          <p class="text-[11px] uppercase tracking-[0.2em] text-red-300/50">
+            mobile platform · MeArm · vision AI
+          </p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3">
+        <!-- Conexion broker -->
+        <div id="brokerStatus" class="status-pill" data-state="disconnected">
+          <span class="dot"></span>
+          <span class="label">BROKER OFF</span>
+          <span class="hint font-mono text-red-300/50" id="brokerHint">ws://localhost:5052</span>
+        </div>
+
+        <!-- Telemetria Pico 2W -->
+        <div id="picoStatus" class="status-pill" data-state="offline">
+          <i data-lucide="cpu" class="w-4 h-4"></i>
+          <span class="label" id="picoStatusLabel">PICO OFFLINE</span>
+          <span class="hint font-mono text-red-300/50" id="picoLastSeen">--</span>
+        </div>
+
+        <!-- Bateria -->
+        <div class="status-pill" data-state="ok" id="batteryPill">
+          <i data-lucide="battery-full" class="w-4 h-4" id="batteryIcon"></i>
+          <span class="label font-mono"><span id="batteryPct">--</span>%</span>
+          <span class="hint font-mono text-red-300/50">
+            <span id="batteryV">--.-</span>V
+          </span>
+        </div>
+
+        <!-- Latencia -->
+        <div class="status-pill" data-state="ok" id="latencyPill">
+          <i data-lucide="activity" class="w-4 h-4"></i>
+          <span class="label font-mono"><span id="latencyMs">--</span> ms</span>
+          <span class="hint font-mono text-red-300/50">ping</span>
+        </div>
+
+      </div>
+    </header>
+
+    <!-- ========== GRID PRINCIPAL ========== -->
+    <section class="grid grid-cols-1 md:grid-cols-12 gap-6">
+
+      <!-- MeArm + gemelo -->
+      <article class="card md:col-span-12 p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i data-lucide="cpu" class="w-5 h-5 text-neon-amber"></i>
+            <h2 class="text-sm font-semibold tracking-wide uppercase text-red-200/90">
+              Brazo Robotico · MeArm
+            </h2>
+          </div>
+          <span
+            id="mearmStatus"
+            class="badge"
+            data-state="idle"
+          >
+            <span class="dot"></span>
+            <span id="mearmStatusLabel">IDLE</span>
+          </span>
+        </div>
+
+        <div class="control-twin-layout">
+          <div class="control-twin-layout__controls space-y-4">
+            <div class="mearm-deck">
+              <div class="deck-header">
+                <span class="deck-tag">4 DOF</span>
+                <span class="deck-sub">Mantén +/− para movimiento fluido</span>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3" id="servoGrid">
+                <!-- servos inyectados via JS -->
+              </div>
+            </div>
+
+            <div class="mearm-toolbar">
+              <button type="button" id="mearmGripOpen" class="mearm-tool-btn">
+                <span class="mearm-tool-icon">◧</span>
+                <span>Abrir pinza</span>
+              </button>
+              <button type="button" id="mearmGripClose" class="mearm-tool-btn">
+                <span class="mearm-tool-icon">◨</span>
+                <span>Cerrar pinza</span>
+              </button>
+              <button type="button" id="mearmHome" class="mearm-tool-btn mearm-tool-btn--accent">
+                <span class="mearm-tool-icon">⌂</span>
+                <span>Home</span>
+              </button>
+            </div>
+            <p class="text-[10px] font-mono text-red-300/50">
+              Controles publican a <code class="text-neon-orange">robot/commands</code> con broker conectado.
+            </p>
+
+            <div class="pt-3 border-t border-red-950/60">
+              <p class="text-[10px] uppercase tracking-[0.18em] text-red-300/50 mb-1">
+                Ultima accion
+              </p>
+              <p class="font-mono text-neon-red text-sm" id="lastAction">--</p>
+            </div>
+          </div>
+
+          <div class="twin-panel twin-panel--embed">
+            <div class="twin-panel__head">
+              <span class="twin-panel-title">Gemelo digital · MeArm 4 DOF</span>
+              <div class="twin-panel__actions">
+                <button type="button" id="twinArmThemeBtn" class="twin-theme-btn" data-theme="white" title="Alternar acabado: blanco · negro · rojo">
+                  <span class="twin-theme-btn__swatch" aria-hidden="true"></span>
+                  <span data-theme-label>Blanco</span>
+                </button>
+                <span class="twin-panel__hint">arrastra · zoom</span>
+              </div>
+            </div>
+            <ul class="twin-servo-legend" id="twinArmLegend" aria-label="Mapa de servos MeArm">
+              <li data-servo="base"><span class="twin-servo-legend__dot twin-servo-legend__dot--base"></span><span><strong data-id>S0 · GPIO 17</strong> Base · giro mesa <span data-val class="twin-servo-legend__val">--°</span></span></li>
+              <li data-servo="shoulder"><span class="twin-servo-legend__dot twin-servo-legend__dot--shoulder"></span><span><strong data-id>S1 · GPIO 18</strong> Hombro · brazo sup. <span data-val class="twin-servo-legend__val">--°</span></span></li>
+              <li data-servo="elbow"><span class="twin-servo-legend__dot twin-servo-legend__dot--elbow"></span><span><strong data-id>S2 · GPIO 20</strong> Codo · brazo inf. <span data-val class="twin-servo-legend__val">--°</span></span></li>
+              <li data-servo="gripper"><span class="twin-servo-legend__dot twin-servo-legend__dot--gripper"></span><span><strong data-id>S3 · GPIO 21</strong> Pinza · abrir/cerrar <span data-val class="twin-servo-legend__val">--°</span></span></li>
+            </ul>
+            <p class="twin-servo-legend__status">Estado: <span id="twinArmLegendStatus">IDLE</span></p>
+            <div id="twinArm" class="twin-viewport twin-viewport--arm"></div>
+            <p class="twin-hud font-mono" id="twinArmHud">--</p>
+            <p class="twin-hud-action font-mono" id="twinArmAction"></p>
+          </div>
+        </div>
+      </article>
+
+      <!-- Drive + gemelo -->
+      <article class="card md:col-span-12 p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i data-lucide="navigation" class="w-5 h-5 text-neon-orange"></i>
+            <h2 class="text-sm font-semibold tracking-wide uppercase text-red-200/90">
+              Desplazamiento
+            </h2>
+          </div>
+          <span id="driveDirection" class="badge" data-state="stop">
+            <span class="dot"></span>
+            <span id="driveDirectionLabel">STOP</span>
+          </span>
+        </div>
+
+        <p id="driveCmdHint" class="drive-hint">
+          <i data-lucide="radio-tower" class="w-3.5 h-3.5 inline-block opacity-70"></i>
+          Comandos en vivo → <code>robot/commands</code> cuando el broker está conectado.
+        </p>
+
+        <div class="control-twin-layout">
+          <div class="control-twin-layout__controls">
+            <div class="drive-deck">
+              <div class="drive-deck__main">
+                <div class="dpad-well">
+                  <div class="dpad-well__glow"></div>
+                  <div class="dpad-well__label">D-PAD</div>
+                  <svg viewBox="0 0 180 180" class="w-full max-w-[11rem] dpad" xmlns="http://www.w3.org/2000/svg">
+                    <defs>
+                      <radialGradient id="dpadGlow" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stop-color="rgba(255,107,53,0.15)" />
+                        <stop offset="100%" stop-color="rgba(255,59,59,0)" />
+                      </radialGradient>
+                    </defs>
+                    <circle cx="90" cy="90" r="86" class="dpad-bg" />
+                    <circle cx="90" cy="90" r="86" fill="url(#dpadGlow)" />
+                    <polygon id="arrowF" class="arrow" points="90,18 108,52 72,52" />
+                    <polygon id="arrowB" class="arrow" points="90,162 108,128 72,128" />
+                    <polygon id="arrowL" class="arrow" points="18,90 52,72 52,108" />
+                    <polygon id="arrowR" class="arrow" points="162,90 128,72 128,108" />
+                    <circle id="arrowS" class="arrow-center" cx="90" cy="90" r="14" />
+                  </svg>
+                </div>
+
+                <div class="motor-panel">
+                  <div class="motor-gauge">
+                    <div class="motor-gauge__head">
+                      <span class="motor-gauge__id">L</span>
+                      <span class="motor-gauge__title">Motor izquierdo</span>
+                      <span class="motor-gauge__pct"><span id="motorLPct">0</span>%</span>
+                    </div>
+                    <div class="bar bar--motor">
+                      <div id="motorLBar" class="bar-fill bg-neon-orange"></div>
+                    </div>
+                  </div>
+                  <div class="motor-gauge">
+                    <div class="motor-gauge__head">
+                      <span class="motor-gauge__id motor-gauge__id--r">R</span>
+                      <span class="motor-gauge__title">Motor derecho</span>
+                      <span class="motor-gauge__pct"><span id="motorRPct">0</span>%</span>
+                    </div>
+                    <div class="bar bar--motor">
+                      <div id="motorRBar" class="bar-fill bg-neon-orange"></div>
+                    </div>
+                  </div>
+                  <div class="motor-panel__footer">
+                    <span>RSSI <strong id="wifiRssi">--</strong> dBm</span>
+                    <span>UP <strong id="uptime">0s</strong></span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="tactical-pad">
+                <div class="tactical-pad__head">
+                  <span class="deck-tag">Maniobras</span>
+                  <span class="deck-sub">45° arco · 90° pivot</span>
+                </div>
+                <div class="tactical-pad__grid">
+                  <button type="button" class="tactic-btn tactic-btn--arc tactic-pos-fl45" data-maneuver="FL45" title="Delantera izquierda 45°">
+                    <span class="tactic-btn__arrow">↖</span>
+                    <span class="tactic-btn__code">FL</span>
+                    <span class="tactic-btn__deg">45°</span>
+                  </button>
+                  <button type="button" class="tactic-btn tactic-btn--arc tactic-pos-fr45" data-maneuver="FR45" title="Delantera derecha 45°">
+                    <span class="tactic-btn__arrow">↗</span>
+                    <span class="tactic-btn__code">FR</span>
+                    <span class="tactic-btn__deg">45°</span>
+                  </button>
+                  <button type="button" class="tactic-btn tactic-btn--pivot tactic-pos-fl90" data-maneuver="FL90" title="Pivot 90° delantero izquierdo">
+                    <span class="tactic-btn__arrow">↺</span>
+                    <span class="tactic-btn__code">FL</span>
+                    <span class="tactic-btn__deg">90°</span>
+                  </button>
+                  <div class="tactic-hub tactic-pos-hub" aria-hidden="true">
+                    <div class="tactic-hub__ring"></div>
+                    <svg viewBox="0 0 24 24" class="tactic-hub__car">
+                      <path d="M6 17h12l-1-4H7l-1 4zm-1-5 1.5-4h11L19 12H5z" fill="currentColor" opacity="0.9"/>
+                      <circle cx="8" cy="17" r="1.5" fill="currentColor"/>
+                      <circle cx="16" cy="17" r="1.5" fill="currentColor"/>
+                    </svg>
+                    <span class="tactic-hub__lbl">2WD</span>
+                  </div>
+                  <button type="button" class="tactic-btn tactic-btn--pivot tactic-pos-fr90" data-maneuver="FR90" title="Pivot 90° delantero derecho">
+                    <span class="tactic-btn__arrow">↻</span>
+                    <span class="tactic-btn__code">FR</span>
+                    <span class="tactic-btn__deg">90°</span>
+                  </button>
+                  <button type="button" class="tactic-btn tactic-btn--arc tactic-pos-rl45" data-maneuver="RL45" title="Trasera izquierda 45°">
+                    <span class="tactic-btn__arrow">↙</span>
+                    <span class="tactic-btn__code">RL</span>
+                    <span class="tactic-btn__deg">45°</span>
+                  </button>
+                  <button type="button" class="tactic-btn tactic-btn--arc tactic-pos-rr45" data-maneuver="RR45" title="Trasera derecha 45°">
+                    <span class="tactic-btn__arrow">↘</span>
+                    <span class="tactic-btn__code">RR</span>
+                    <span class="tactic-btn__deg">45°</span>
+                  </button>
+                  <button type="button" class="tactic-btn tactic-btn--pivot tactic-pos-bl90" data-maneuver="BL90" title="Pivot 90° trasero izquierdo">
+                    <span class="tactic-btn__arrow">↺</span>
+                    <span class="tactic-btn__code">BL</span>
+                    <span class="tactic-btn__deg">90°</span>
+                  </button>
+                  <button type="button" class="tactic-btn tactic-btn--pivot tactic-pos-br90" data-maneuver="BR90" title="Pivot 90° trasero derecho">
+                    <span class="tactic-btn__arrow">↻</span>
+                    <span class="tactic-btn__code">BR</span>
+                    <span class="tactic-btn__deg">90°</span>
+                  </button>
+                </div>
+                <p class="tactical-pad__note">
+                  Modo tanque: arcos 45° aproximados · pivot 90° con giro L/R
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="twin-panel twin-panel--embed">
+            <div class="twin-panel__head">
+              <span class="twin-panel-title">Gemelo digital · Chasis 2WD</span>
+              <span class="twin-panel__hint">arrastra · zoom</span>
+            </div>
+            <div id="twinCar" class="twin-viewport twin-viewport--car"></div>
+            <p class="twin-hud font-mono" id="twinCarHud">--</p>
+          </div>
+        </div>
+      </article>
+
+      <!-- Ultrasonido (HC-SR04) -->
+      <article class="card md:col-span-12 p-5 space-y-4" id="ultrasonicCard">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div class="flex items-center gap-2">
+            <i data-lucide="radar" class="w-5 h-5 text-neon-amber"></i>
+            <div>
+              <h2 class="text-sm font-semibold tracking-wide uppercase text-red-200/90">
+                Sensor ultrasonico · HC-SR04
+              </h2>
+              <p class="text-[10px] font-mono text-red-300/45 mt-0.5">
+                Trig/Echo · rango <span id="usonicRange">2–400</span> cm
+              </p>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <span id="usonicObjBadge" class="badge" data-state="idle">
+              <span class="dot"></span>
+              <span id="usonicObjLabel">SIN ECO</span>
+            </span>
+            <span id="usonicBadge" class="badge" data-state="idle">
+              <span class="dot"></span>
+              <span id="usonicBadgeLabel">--</span>
+            </span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
+          <div class="lg:col-span-5 flex flex-col gap-3">
+            <div class="usonic-radar-wrap">
+              <svg viewBox="0 0 220 130" class="w-full usonic-svg" aria-label="Radar de proximidad">
+                <defs>
+                  <linearGradient id="usonicGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#ff3b3b" />
+                    <stop offset="50%" stop-color="#ff9f1c" />
+                    <stop offset="100%" stop-color="#ff6b35" />
+                  </linearGradient>
+                </defs>
+                <path class="usonic-zone-fill usonic-zone--crit" id="usonicZoneCrit" />
+                <path class="usonic-zone-fill usonic-zone--warn" id="usonicZoneWarn" />
+                <path class="usonic-zone-fill usonic-zone--ok" id="usonicZoneOk" />
+                <path class="usonic-zone-fill usonic-zone--clear" id="usonicZoneClear" />
+                <path class="usonic-arc usonic-arc--bg" d="M 24 118 A 86 86 0 0 1 196 118" />
+                <g class="usonic-sweep" id="usonicSweep">
+                  <line x1="110" y1="118" x2="110" y2="28" class="usonic-sweep-line" />
+                </g>
+                <path class="usonic-arc usonic-arc--fill" id="usonicArc" d="M 24 118 A 86 86 0 0 1 110 118" />
+                <line id="usonicBeam" x1="110" y1="118" x2="110" y2="50" class="usonic-beam" />
+                <circle id="usonicEcho" cx="110" cy="50" r="0" class="usonic-echo" />
+                <circle id="usonicEcho2" cx="110" cy="50" r="0" class="usonic-echo usonic-echo--delay" />
+                <circle cx="110" cy="118" r="7" class="usonic-origin" />
+                <text x="110" y="127" text-anchor="middle" class="usonic-svg-label">ROBOT</text>
+                <text x="28" y="112" class="usonic-tick">0</text>
+                <text x="196" y="112" text-anchor="end" class="usonic-tick" id="usonicTickMax">400</text>
+                <text id="usonicArcLabel" x="110" y="72" text-anchor="middle" class="usonic-arc-label">-- cm</text>
+              </svg>
+            </div>
+            <div class="usonic-history-box">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-[10px] uppercase tracking-widest text-red-300/50">Historial</span>
+                <span class="font-mono text-[10px] text-red-300/45" id="usonicTrend">--</span>
+              </div>
+              <canvas id="usonicHistory" width="400" height="56" class="usonic-history-canvas"></canvas>
+            </div>
+          </div>
+
+          <div class="lg:col-span-4 flex flex-col justify-center gap-4">
+            <div class="usonic-readout">
+              <p class="text-[10px] uppercase tracking-[0.2em] text-red-300/50">Distancia al obstaculo</p>
+              <p class="font-mono text-5xl font-bold tabular-nums usonic-distance-value">
+                <span id="usonicDistance">--</span>
+                <span class="text-xl text-red-300/55 ml-1">cm</span>
+              </p>
+              <p class="font-mono text-xs text-red-300/50 mt-1" id="usonicDelta">--</p>
+            </div>
+            <div class="grid grid-cols-2 gap-2 usonic-zone-chips">
+              <div class="usonic-chip" data-zone="CRITICAL" id="usonicChipCrit">
+                <span class="usonic-chip-dot"></span>
+                <span><b>&lt;15</b> cm · Critico</span>
+              </div>
+              <div class="usonic-chip" data-zone="WARNING" id="usonicChipWarn">
+                <span class="usonic-chip-dot"></span>
+                <span><b>15–35</b> · Cerca</span>
+              </div>
+              <div class="usonic-chip" data-zone="OK" id="usonicChipOk">
+                <span class="usonic-chip-dot"></span>
+                <span><b>35–120</b> · Segura</span>
+              </div>
+              <div class="usonic-chip" data-zone="CLEAR" id="usonicChipClear">
+                <span class="usonic-chip-dot"></span>
+                <span><b>&gt;120</b> · Lejos</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="lg:col-span-3 flex flex-col gap-3">
+            <p class="text-[10px] uppercase tracking-widest text-red-300/50">Mapa de zonas</p>
+            <div class="usonic-ladder flex-1">
+              <div class="usonic-ladder-seg" data-zone="CRITICAL">
+                <span>Critico</span><span>&lt;15 cm</span>
+              </div>
+              <div class="usonic-ladder-seg" data-zone="WARNING">
+                <span>Cerca</span><span>15–35</span>
+              </div>
+              <div class="usonic-ladder-seg" data-zone="OK">
+                <span>Segura</span><span>35–120</span>
+              </div>
+              <div class="usonic-ladder-seg" data-zone="CLEAR">
+                <span>Lejos</span><span>120–400</span>
+              </div>
+              <div class="usonic-ladder-marker" id="usonicLadderMarker" style="top: 50%"></div>
+            </div>
+            <div class="space-y-2">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-red-300/55">Nivel de proximidad</span>
+                <span class="font-mono text-neon-amber" id="usonicZoneLabel">--</span>
+              </div>
+              <div class="bar h-3 usonic-bar-track">
+                <div id="usonicBar" class="bar-fill bg-neon-orange transition-all duration-300" style="width: 0%"></div>
+              </div>
+              <div class="flex justify-between font-mono text-[10px] text-red-400/45">
+                <span>cerca</span>
+                <span id="usonicMaxLabel">400 cm</span>
+              </div>
+              <p class="text-[11px] text-red-300/50 leading-relaxed border-t border-red-950/50 pt-2" id="usonicHint">
+                Esperando telemetria del sensor...
+              </p>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- Vision A - stream -->
+      <article class="card md:col-span-7 p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i data-lucide="camera" class="w-5 h-5 text-neon-red"></i>
+            <h2 class="text-sm font-semibold tracking-wide uppercase text-red-200/90">
+              Vision · Stream
+            </h2>
+          </div>
+          <span class="badge" data-state="live">
+            <span class="dot"></span>
+            <span>LIVE FEED</span>
+          </span>
+        </div>
+
+        <div class="stream-frame relative aspect-[4/3] rounded-xl overflow-hidden">
+          <canvas
+            id="streamCanvas"
+            width="320"
+            height="240"
+            class="absolute inset-0 w-full h-full"
+          ></canvas>
+          <div class="scanlines absolute inset-0 pointer-events-none"></div>
+          <div
+            id="crosshair"
+            class="crosshair absolute pointer-events-none transition-all duration-300"
+            style="left: 50%; top: 50%;"
+          >
+            <div class="ch-h"></div>
+            <div class="ch-v"></div>
+            <div class="ch-box"></div>
+          </div>
+          <div
+            class="absolute top-2 left-2 text-[10px] font-mono text-neon-red/80 tracking-widest"
+          >
+            ● REC · 320×240
+          </div>
+          <div
+            class="absolute bottom-2 right-2 text-[10px] font-mono text-red-300/55"
+          >
+            X:<span id="targetX">---</span> Y:<span id="targetY">---</span>
+          </div>
+        </div>
+      </article>
+
+      <!-- Vision B - analitica IA -->
+      <article class="card md:col-span-5 p-5 space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i data-lucide="scan-eye" class="w-5 h-5 text-neon-amber"></i>
+            <h2 class="text-sm font-semibold tracking-wide uppercase text-red-200/90">
+              Analisis IA
+            </h2>
+          </div>
+          <span id="targetBadge" class="badge" data-state="idle">
+            <span class="dot"></span>
+            <span id="targetBadgeLabel">SIN OBJETIVO</span>
+          </span>
+        </div>
+
+        <p class="text-[10px] uppercase tracking-[0.18em] text-red-300/50">
+          Deteccion de objetos · composicion RGB por pixel
+        </p>
+        <p class="text-[10px] font-mono text-red-300/45">
+          Clasificacion HSV por pixel · cuadros delimitadores por concentracion · <code class="text-neon-orange">robot/camera</code>
+        </p>
+
+        <div class="stream-frame relative aspect-[4/3] rounded-xl overflow-hidden vision-detect-frame">
+          <canvas
+            id="visionOverlayCanvas"
+            width="320"
+            height="240"
+            class="absolute inset-0 w-full h-full"
+          ></canvas>
+          <div id="visionLegend" class="vision-legend absolute bottom-0 left-0 right-0 pointer-events-none"></div>
+          <div class="absolute top-2 left-2 text-[10px] font-mono text-neon-amber/90 tracking-widest z-10">
+            ● IA OVERLAY
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <div
+            id="dominantSwatch"
+            class="w-12 h-12 rounded-lg border border-red-900/40 shadow-inner transition-all duration-300"
+            style="background: #475569;"
+          ></div>
+          <div class="flex-1 min-w-0">
+            <p class="text-[10px] uppercase tracking-[0.18em] text-red-300/50">
+              Color dominante
+            </p>
+            <p class="font-mono text-lg" id="dominantLabel">--</p>
+            <p class="font-mono text-[11px] text-red-300/50" id="dominantHex">#--</p>
+          </div>
+        </div>
+
+        <p class="text-[10px] uppercase tracking-[0.18em] text-red-300/50 pt-1">
+          Distribucion en encuadre (%)
+        </p>
+        <div class="h-36">
+          <canvas id="colorChart"></canvas>
+        </div>
+      </article>
+
+      <!-- IR log -->
+      <article class="card md:col-span-12 p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <i data-lucide="radio" class="w-5 h-5 text-neon-amber"></i>
+            <h2 class="text-sm font-semibold tracking-wide uppercase text-red-200/90">
+              Sensor IR · Comandos recibidos
+            </h2>
+          </div>
+          <span class="text-[11px] font-mono text-red-300/50">
+            <span id="irCount">0</span> eventos
+          </span>
+        </div>
+
+        <div
+          id="irLog"
+          class="ir-log font-mono text-xs space-y-1 overflow-y-auto max-h-56 pr-2"
+        >
+          <p class="text-red-400/40">[boot] Esperando comandos IR...</p>
+        </div>
+      </article>
+
+    </section>
+
+    <footer class="text-center text-[11px] text-red-400/40 font-mono pt-2">
+      SISEMB · Raspberry Pi Pico 2W · MicroPython + simpleBroker
+    </footer>
+  </main>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="twin.js"></script>
+  <script src="vision_color.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
